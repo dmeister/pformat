@@ -1,6 +1,8 @@
 #include <benchmark/benchmark.h>
 #include <pformat/pformat.h>
 
+static char const * const s = "text";
+
 static void BM_PFormat(benchmark::State &state) {
     using namespace pformat;
     auto n = state.range(0);
@@ -10,7 +12,7 @@ static void BM_PFormat(benchmark::State &state) {
         for (long i = 0; i < n; ++i) {
             char buf[100];
             benchmark::DoNotOptimize(buf);
-            auto end = compiled_format.format_to(buf, i, 2, "str");
+            auto end = compiled_format.format_to(buf, i, 2, s);
             *end = 0;
             benchmark::ClobberMemory();
         }

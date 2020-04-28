@@ -7,6 +7,7 @@ TEST(PFormat, Format) {
     using namespace pformat;
     // this example shows the compiled format style of usage
     auto s = "foo {} bar {} do {}"_fmt.format(1, 2, "bar");
+
     ASSERT_EQ(s, "foo 1 bar 2 do bar");
 }
 

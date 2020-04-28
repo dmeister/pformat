@@ -25,45 +25,9 @@ template <typename parse_result_t>
 class log_config {
     parse_result_t parse_result;
 
-    struct string_size_visitor {
-        uint64_t size = 0;
-
-        template <typename element_t>
-        inline void visit_element(element_t const &e) noexcept {
-            size += e.size();
-        }
-
-        template <typename parameter_t, typename arg_t>
-        inline void visit_parameter(parameter_t const &, arg_t arg) noexcept {
-            using placement::placement_size;
-            size += placement_size(arg);
-        }
-    };
-
     inline constexpr auto get_parameter_count() const {
         return parse_result.get_parameter_count();
     }
-
-    struct format_visitor {
-        char *start_buf;
-        char *buf;
-
-        size_t size() const noexcept { return buf - start_buf; }
-
-        inline format_visitor(char *buf_) : start_buf(buf_), buf(buf_) {}
-
-        template <typename element_t>
-        inline void visit_element(element_t const &e) {
-            using placement::unsafe_place;
-            buf = unsafe_place(buf, e.c_str(), e.size());
-        }
-
-        template <typename parameter_t, typename arg_t>
-        inline void visit_parameter(parameter_t const &, arg_t &&arg) {
-            using placement::unsafe_place;
-            buf = unsafe_place(buf, std::forward<arg_t>(arg));
-        }
-    };
 
    public:
     explicit constexpr log_config(parse_result_t const &result_)
@@ -82,10 +46,15 @@ class log_config {
         if constexpr (!parameter_count_match || !placeable) {
             return 0;
         } else {
-            string_size_visitor v;
             auto t = std::forward_as_tuple(std::forward<args_t>(args)...);
-            parse_result.visit_with_tuple(v, std::move(t));
-            return v.size + 1;
+            size_t size{};
+            parse_result.visit([&size](auto fe) { size += fe.size(); },
+                               [&t, &size](auto pe) {
+                                   using placement::placement_size;
+                                   size +=
+                                       placement_size(std::get<pe.index>(t));
+                               });
+            return size + 1;
         }
     }
 
@@ -115,11 +84,22 @@ class log_config {
             const auto s = string_size_bound(std::forward<args_t>(args)...);
             std::string str_result;
             str_result.resize(s);  // reserve sufficient space for the output
-            format_visitor v(str_result.data());
             auto t = std::forward_as_tuple(std::forward<args_t>(args)...);
-            parse_result_t::visit_with_tuple(v, t);
-            *v.buf = 0;
-            str_result.resize(v.size());
+            char *buf = str_result.data();
+
+            parse_result_t::visit(
+                [this, &buf](auto fe) {
+                    using placement::unsafe_place;
+                    buf = unsafe_place(
+                        buf, parse_result.str().data() + fe.start, fe.size());
+                },
+                [this, &t, &buf](auto pe) {
+                    using placement::unsafe_place;
+                    auto const &arg = std::get<pe.index>(t);
+                    buf = unsafe_place(buf, arg);
+                });
+            *buf = 0;
+            str_result.resize(buf - str_result.data());
             return str_result;
         }
     }
@@ -137,7 +117,7 @@ class log_config {
             parse_result_t::get_parameter_count() == sizeof...(args);
         static_assert(
             parameter_count_match,
-            "Number of format parameters doens't match to format string");
+            "Number of format parameters doesn't match to format string");
         if constexpr (!parameter_count_match) {
             // we will already have static asserted when getting here, but
             // to ensure a readable error message, we cut out the rest of
@@ -149,10 +129,22 @@ class log_config {
                 // we will already have static asserted when getting here.
                 return {};
             } else {
-                format_visitor v(buf);
                 auto t = std::forward_as_tuple(std::forward<args_t>(args)...);
-                parse_result_t::visit_with_tuple(v, t);
-                return v.buf;
+
+                parse_result_t::visit(
+                    [this, &buf](auto fe) {
+                        using placement::unsafe_place;
+                        buf = unsafe_place(buf,
+                                           parse_result.str().data() + fe.start,
+                                           fe.size());
+                    },
+                    [&buf, &t](auto pe) {
+                        using placement::unsafe_place;
+                        auto const &arg = std::get<pe.index>(t);
+                        buf = unsafe_place(buf, arg);
+                    });
+                *buf = 0;
+                return buf;
             }
         }
     }

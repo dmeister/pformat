@@ -89,7 +89,7 @@ char *unsafe_place(char *buf, int_t value) noexcept {
     return p;
 }
 
-char *unsafe_place(char *buf, char value) noexcept {
+inline char *unsafe_place(char *buf, char value) noexcept {
     *buf = value;
     return buf + 1;
 }
@@ -146,6 +146,8 @@ inline char *unsafe_place(char *buf, format_extention_t const &d) {
 
 // placement_size returns the maximal size a value can take in a formatted
 // string.
+//
+// we assume the longest integral is 64-bit and use that number
 template <typename int_t, typename std::enable_if<
                               std::is_integral<int_t>::value>::type * = nullptr>
 constexpr size_t placement_size(int_t) noexcept {
@@ -154,6 +156,7 @@ constexpr size_t placement_size(int_t) noexcept {
     return 20;
 }
 
+// size of a floating point number if placed
 template <typename float_t,
           typename std::enable_if<std::is_floating_point<float_t>::value>::type
               * = nullptr>
@@ -161,8 +164,12 @@ constexpr size_t placement_size(float_t) noexcept {
     return 20;
 }
 
+// size of a char if placed
 constexpr size_t placement_size(char) noexcept { return 1; }
 
+// size of an enu if placed
+//
+// We use the underlying type
 template <typename enum_t, typename std::enable_if<
                                std::is_enum<enum_t>::value>::type * = nullptr>
 constexpr size_t placement_size(enum_t v) noexcept {
@@ -170,6 +177,7 @@ constexpr size_t placement_size(enum_t v) noexcept {
     return placement_size(static_cast<int_t>(v));
 }
 
+// size of a a format extension when placed
 template <typename format_extention_t,
           typename std::enable_if<std::is_base_of<
               format_extention, format_extention_t>::value>::type * = nullptr>
@@ -177,14 +185,17 @@ constexpr size_t placement_size(format_extention_t const &d) noexcept {
     return d.placement_size();
 }
 
-inline constexpr size_t placement_size(std::string const &s) noexcept {
+// size of a std::string if placed
+inline size_t placement_size(std::string const &s) noexcept {
     return s.size();
 }
 
+// size of a string_view if placed
 inline constexpr size_t placement_size(std::string_view const &s) noexcept {
     return s.size();
 }
 
+// size of a const char * if placed
 inline size_t placement_size(const char *s) noexcept { return std::strlen(s); }
 
 namespace internal {

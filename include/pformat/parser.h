@@ -4,7 +4,6 @@
 #include <array>
 #include <cassert>
 #include <cstring>
-#include <iostream>
 #include <numeric>
 #include <tuple>
 #include <type_traits>
@@ -22,114 +21,85 @@ struct state_out_escape {};
 
 enum class format_type { PARAMETER, ELEMENT };
 
-template <const auto &grammer_str, size_t start_v, size_t end_v>
+// format element copying a substring of the grammer to the output
+template <size_t start_v, size_t end_v>
 struct format_element {
-    constexpr static size_t start = start_v;
-    constexpr static size_t end = end_v;
-
-    constexpr static const char *c = grammer_str.c_str() + start;
-
-    constexpr static size_t s = end - start;
     static constexpr auto type = format_type::ELEMENT;
 
     static constexpr size_t size() noexcept { return s; }
 
-    static constexpr const char *c_str() noexcept { return c; }
+    // offset into the grammer string
+    constexpr static size_t start = start_v;
+    // end offset within the grammer string
+    constexpr static size_t end = end_v;
+
+   private:
+    constexpr static size_t s = end - start;
 };
 
+// format based on a parameter
+template <size_t i>
 struct format_parameter {
     static constexpr auto type = format_type::PARAMETER;
-};
-
-/**
- * Prototype for a format visitor
- * for visit
- */
-struct format_visitor {
-    template <typename element_t>
-    void visit_element(element_t const &) {}
-
-    template <typename parameter_t>
-    void visit_parameter(parameter_t const &) {}
-};
-
-/**
- * Prototype for a format visitor
- * for visit_with_tuple
- */
-struct format_visitor_with_tuple {
-    template <typename element_t>
-    void visit_element(element_t const &) {}
-
-    template <typename parameter_t, typename arg_t>
-    void visit_parameter(parameter_t const &, arg_t const &) {}
+    constexpr static size_t index = i;
 };
 
 // result of a format parsing
-template <bool ok, int parameter_count, typename... element_t>
+template <std::string_view const &grammer_str, typename... element_t>
 struct format_result {
-    static constexpr auto is_valid_format_string() noexcept { return ok; }
-
-    static constexpr auto get_parameter_count() noexcept {
-        return parameter_count;
+    // returns true iff this is a valid formatting string
+    static constexpr bool is_valid_format_string() noexcept {
+        return sizeof...(element_t) > 0;
     }
+
+    // returns the number of parameters
+    static constexpr auto get_parameter_count() noexcept {
+        size_t count{};
+        visit([](auto) {}, [&count](auto) { count++; });
+        return count;
+    }
+
+    static std::string_view const &str() noexcept { return grammer_str; }
 
     // the visit function using the visitor pattern
     // is the main way inspect the format result.
-    template <typename visitor_t>
-    inline static constexpr void visit(visitor_t &v) {
-        static_assert(ok);
-        return visit_helper<visitor_t, element_t...>(v);
-    }
-
-    // combines the format result with the arguments (for format parameter)
-    template <typename visitor_t, typename tuple_t>
-    inline static constexpr void visit_with_tuple(visitor_t &v, tuple_t &&t) {
-        static_assert(ok);
-        return visit_with_tuple_helper<visitor_t, 0, decltype(t), element_t...>(
-            v, t);
+    template <typename element_func_t, typename parameter_func_t>
+    inline static constexpr void visit(element_func_t &&ev,
+                                       parameter_func_t &&pv) {
+        static_assert(is_valid_format_string());
+        visit_helper<element_func_t, parameter_func_t, element_t...>(
+            std::forward<element_func_t>(ev),
+            std::forward<parameter_func_t>(pv));
     }
 
    private:
-    template <typename visitor_t, typename first_t, typename... rest_t>
-    inline static constexpr void visit_helper(visitor_t &v) {
-        if constexpr (first_t::type == format_type::PARAMETER) {
-            v.visit_parameter(first_t());
-        } else {
-            v.visit_element(first_t());
-        }
-        visit_helper<visitor_t, rest_t...>(v);
-    }
-
-    template <typename visitor_t>
-    inline static constexpr void visit_helper(visitor_t &) {
-        return;
-    }
-
-    template <typename visitor_t, int n, typename tuple_t, typename first_t,
+    template <typename ev_t, typename pv_t, typename first_t,
               typename... rest_t>
-    inline static constexpr void visit_with_tuple_helper(visitor_t &v,
-                                                         tuple_t const &t) {
+    inline static constexpr void visit_helper(ev_t &&ev, pv_t &&pv) {
         if constexpr (first_t::type == format_type::PARAMETER) {
-            v.visit_parameter(first_t(), std::get<n>(t));
-            visit_with_tuple_helper<visitor_t, n + 1, tuple_t, rest_t...>(v, t);
+            pv(first_t{});
         } else {
-            v.visit_element(first_t());
-            visit_with_tuple_helper<visitor_t, n, tuple_t, rest_t...>(v, t);
+            ev(first_t{});
         }
+        visit_helper<ev_t, pv_t, rest_t...>(std::forward<ev_t>(ev),
+                                            std::forward<pv_t>(pv));
     }
 
-    template <typename visitor_t, int n, typename tuple_t>
-    inline static constexpr void visit_with_tuple_helper(visitor_t &,
-                                                         tuple_t const &) {
+    template <typename ev_t, typename pv_t>
+    inline static constexpr void visit_helper(ev_t &&, pv_t &&) {
         return;
     }
 };
 
+// the static string instance holding the grammer
+// neither the fixed_str nor the string_view can be changed
+
 template <char... charpack>
 struct grammer_str {
-    constexpr static auto str =
+    constexpr static auto fixed_str =
         fixed_string<sizeof...(charpack) + 1>({charpack...});
+    constexpr static std::string_view str{
+        grammer_str<charpack...>::fixed_str.view()};
 };
 
 // grammer for parsing
@@ -137,59 +107,67 @@ struct grammer_str {
 // grammer_str: reference to a grammer_str instance
 // n: current offset in the grammer string
 // start_stack: start of next "format_element"
-// parameter_count: number of format_parameter elements
+// pc: number of format_parameter elements
 // result_t: format_element/format_parameter types, which is
 // form the mainresult of the grammer 'execution'.
-template <const auto &grammer_str, int n, int start_stack, int parameter_count,
+template <std::string_view const &grammer_str, int n, int start_stack, int pc,
           typename... result_t>
 struct grammer {
+    // calculate the next format_result type
+
+    // current state: within a format parameter
     static constexpr auto next(state_in) {
         constexpr auto c = grammer_str[n];
-        if constexpr (c == '}') {
-            return grammer<grammer_str, n + 1, n + 1, parameter_count + 1,
-                           result_t..., format_parameter>::next(state_out());
+        if constexpr (c == '}') {  // } -> add format_parameter, move out
+            return grammer<grammer_str, n + 1, n + 1, pc + 1, result_t...,
+                           format_parameter<pc>>::next(state_out());
         } else if constexpr (c == '{') {
             // {{ escape
-            return grammer<grammer_str, n + 1, n, parameter_count,
-                           result_t...>::next(state_out());
+            return grammer<grammer_str, n + 1, n, pc, result_t...>::next(
+                state_out());
         } else {
-            return format_result<false, 0>();
+            // invalid
+            return format_result<grammer_str>();
         }
     }
 
+    // current state: outside a format parameter
     static constexpr auto next(state_out) {
         constexpr auto c = grammer_str[n];
+
         if constexpr (c == '{' && start_stack != n) {
-            using next_element_t = format_element<grammer_str, start_stack, n>;
-            return grammer<grammer_str, n + 1, n, parameter_count, result_t...,
+            using next_element_t = format_element<start_stack, n>;
+            return grammer<grammer_str, n + 1, n, pc, result_t...,
                            next_element_t>::next(state_in());
         } else if constexpr (c == '{') {
-            return grammer<grammer_str, n + 1, n, parameter_count,
-                           result_t...>::next(state_in());
-        } else if constexpr (c == '}') {
-            return grammer<grammer_str, n + 1, start_stack, parameter_count,
+            return grammer<grammer_str, n + 1, n, pc, result_t...>::next(
+                state_in());
+        } else if constexpr (c == '}') {  // maybe an escape {{}}?
+            return grammer<grammer_str, n + 1, start_stack, pc,
                            result_t...>::next(state_out_escape());
         } else if constexpr (c == 0 && start_stack != n) {
-            using next_element_t = format_element<grammer_str, start_stack, n>;
-            return format_result<true, parameter_count, result_t...,
-                                 next_element_t>();
+            using next_element_t = format_element<start_stack, n>;
+            return format_result<grammer_str, result_t..., next_element_t>();
         } else if constexpr (c == 0) {
-            return format_result<true, parameter_count, result_t...>();
+            // end of string
+            return format_result<grammer_str, result_t...>();
         } else {
-            return grammer<grammer_str, n + 1, start_stack, parameter_count,
+            return grammer<grammer_str, n + 1, start_stack, pc,
                            result_t...>::next(state_out());
         }
     }
 
+    // outside a format parameter
     static constexpr auto next(state_out_escape) {
         constexpr auto c = grammer_str[n];
         if constexpr (c == '}') {
             // closed the escape }}
-            using next_element_t = format_element<grammer_str, start_stack, n>;
-            return grammer<grammer_str, n + 1, n + 1, parameter_count,
-                           result_t..., next_element_t>::next(state_out());
+            using next_element_t = format_element<start_stack, n>;
+            return grammer<grammer_str, n + 1, n + 1, pc, result_t...,
+                           next_element_t>::next(state_out());
         } else {
-            return format_result<false, 0>();
+            // we expect the closing '} here => not a valid format string
+            return format_result<grammer_str>();
         }
     }
 };
@@ -201,7 +179,13 @@ struct grammer {
 // the parsing was successful or not.
 template <char... charpack>
 constexpr auto parse_format() {
-    return grammer<grammer_str<charpack...>::str, 0, 0, 0>::next(state_out());
+    if constexpr (sizeof...(charpack) == 0) {
+        return format_result<grammer_str<charpack...>::str,
+                             format_element<0, 0>>();
+    } else {
+        return grammer<grammer_str<charpack...>::str, 0, 0, 0>::next(
+            state_out());
+    }
 }
 
 }  // namespace internal

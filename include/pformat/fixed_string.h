@@ -1,6 +1,7 @@
 #pragma once
 
-#include <stddef.h>
+#include <cstddef>
+#include <string_view>
 
 namespace pformat {
 namespace internal {
@@ -37,6 +38,10 @@ struct fixed_string {
     constexpr char operator[](size_t i) const noexcept { return str[i]; }
 
     constexpr const char* c_str() const { return str; }
+
+    constexpr std::string_view view() const {
+        return {c_str(), size()};
+    }
 };
 
 static_assert(fixed_string<1>("").size() == 0);

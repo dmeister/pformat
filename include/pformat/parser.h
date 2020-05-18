@@ -17,7 +17,6 @@ namespace internal {
 
 struct state_in {};
 struct state_out {};
-struct state_out_escape {};
 
 enum class format_type { PARAMETER, ELEMENT };
 
@@ -115,61 +114,36 @@ template <std::string_view const &grammer_str, int n, int start_stack, int pc,
 struct grammer {
     // calculate the next format_result type
 
-    // current state: within a format parameter
-    static constexpr auto next(state_in) {
-        constexpr auto c = grammer_str[n];
-        if constexpr (c == '}') {  // } -> add format_parameter, move out
-            return grammer<grammer_str, n + 1, n + 1, pc + 1, result_t...,
-                           format_parameter<pc>>::next(state_out());
-        } else if constexpr (c == '{') {
-            // {{ escape
-            return grammer<grammer_str, n + 1, n, pc, result_t...>::next(
-                state_out());
-        } else {
-            // invalid
-            return format_result<grammer_str>();
-        }
-    }
-
     // current state: outside a format parameter
     static constexpr auto next(state_out) {
         constexpr auto c = grammer_str[n];
 
-        if constexpr (c == '{' && start_stack != n) {
+        if constexpr (c == '{') {
             using next_element_t = format_element<start_stack, n>;
             return grammer<grammer_str, n + 1, n, pc, result_t...,
                            next_element_t>::next(state_in());
-        } else if constexpr (c == '{') {
-            return grammer<grammer_str, n + 1, n, pc, result_t...>::next(
-                state_in());
-        } else if constexpr (c == '}') {  // maybe an escape {{}}?
-            return grammer<grammer_str, n + 1, start_stack, pc,
-                           result_t...>::next(state_out_escape());
-        } else if constexpr (c == 0 && start_stack != n) {
-            using next_element_t = format_element<start_stack, n>;
-            return format_result<grammer_str, result_t..., next_element_t>();
         } else if constexpr (c == 0) {
             // end of string
-            return format_result<grammer_str, result_t...>();
+            using next_element_t = format_element<start_stack, n>;
+            return format_result<grammer_str, result_t..., next_element_t>();
         } else {
             return grammer<grammer_str, n + 1, start_stack, pc,
                            result_t...>::next(state_out());
         }
     }
 
-    // outside a format parameter
-    static constexpr auto next(state_out_escape) {
+    // current state: within a format parameter
+    static constexpr auto next(state_in) {
         constexpr auto c = grammer_str[n];
-        if constexpr (c == '}') {
-            // closed the escape }}
-            using next_element_t = format_element<start_stack, n>;
-            return grammer<grammer_str, n + 1, n + 1, pc, result_t...,
-                           next_element_t>::next(state_out());
+        if constexpr (c == '}') {  // } -> add format_parameter, move out
+            return grammer<grammer_str, n + 1, n + 1, pc + 1,
+                result_t..., format_parameter<pc>>::next(state_out());
         } else {
-            // we expect the closing '} here => not a valid format string
+            // invalid
             return format_result<grammer_str>();
         }
     }
+
 };
 
 // parses the charpack

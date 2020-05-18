@@ -41,28 +41,6 @@ TEST(Pformat, SimpleLiterals) {
     ASSERT_EQ(s, "foo a bar  d");
 }
 
-TEST(Pformat, Escaping) {
-    using namespace pformat;
-
-    constexpr auto f = "foo {{foo"_fmt;
-    ASSERT_EQ(f.format(), "foo {foo");
-
-    constexpr auto f2 = "foo {{{}"_fmt;
-    ASSERT_EQ(f2.format("bar"), "foo {bar");
-
-    constexpr auto f3 = "foo }}"_fmt;
-    ASSERT_EQ(f3.format(), "foo }");
-
-    constexpr auto f4 = "foo }}bar"_fmt;
-    ASSERT_EQ(f4.format(), "foo }bar");
-
-    constexpr auto f5 = "foo }}{}"_fmt;
-    ASSERT_EQ(f5.format("bar"), "foo }bar");
-
-    constexpr auto f6 = "foo {{}} bar"_fmt;
-    ASSERT_EQ(f6.format(), "foo {} bar");
-}
-
 TEST(Pformat, FormatInteger) {
     using namespace pformat;
 

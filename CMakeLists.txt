@@ -48,7 +48,7 @@ include_directories(/usr/local/include/ include)
 add_executable(pformat_benchmark benchmark/fmt_benchmark.cpp
     benchmark/pformat_benchmark.cpp benchmark/benchmark_main.cpp benchmark/printf_benchmark.cpp benchmark/cout_benchmark.cpp)
 
-add_executable(pformat_test test/pformat_test.cpp test/test_main.cpp)
+add_executable(pformat_test test/pformat_test.cpp test/placement_test.cpp test/fixed_string_test.cpp test/parser_test.cpp test/test_main.cpp)
 
 target_link_libraries(pformat_benchmark LINK_PUBLIC benchmark fmt)
 target_link_libraries(pformat_test LINK_PUBLIC gtest_main)

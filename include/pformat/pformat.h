@@ -1,13 +1,3 @@
-#include <algorithm>
-#include <array>
-#include <cassert>
-#include <cstring>
-#include <iostream>
-#include <numeric>
-#include <tuple>
-#include <type_traits>
-#include <vector>
-
 #include "fixed_string.h"
 #include "parser.h"
 #include "placement.h"
@@ -21,13 +11,9 @@ namespace pformat {
  * It is advised to store the result in an 'auto' variable
  * or to not store it at all.
  */
-template <typename parse_result_t>
+template <typename parse_result_t, bool valid, size_t pc>
 class log_config {
     parse_result_t parse_result;
-
-    inline constexpr auto get_parameter_count() const {
-        return parse_result.get_parameter_count();
-    }
 
    public:
     explicit constexpr log_config(parse_result_t const &result_)
@@ -38,22 +24,20 @@ class log_config {
      * including the trailing zero.
      */
     template <typename... args_t>
-    size_t string_size_bound(args_t &&... args) const {
-        constexpr bool parameter_count_match =
-            parse_result_t::get_parameter_count() == sizeof...(args);
+    std::size_t string_size_bound(args_t &&... args) const {
+        constexpr bool parameter_count_match = pc == sizeof...(args);
         constexpr auto placeable = placement::test_placements<args_t...>();
-        static_assert(parse_result_t::get_parameter_count() == sizeof...(args));
+        static_assert(pc == sizeof...(args));
         if constexpr (!parameter_count_match || !placeable) {
             return 0;
         } else {
-            auto t = std::forward_as_tuple(std::forward<args_t>(args)...);
-            size_t size{};
-            parse_result.visit([&size](auto fe) { size += fe.size(); },
-                               [&t, &size](auto pe) {
+            std::size_t size{};
+            parse_result.visit([&size](char const *, size_t len) { size += len; },
+                               [&size](auto &&args) {
                                    using placement::placement_size;
-                                   size +=
-                                       placement_size(std::get<pe.index>(t));
-                               });
+                                   size += placement_size(args);
+                               },
+                               std::forward<args_t>(args)...);
             return size + 1;
         }
     }
@@ -69,8 +53,7 @@ class log_config {
      */
     template <typename... args_t>
     std::string format(args_t &&... args) const {
-        constexpr bool parameter_count_match =
-            parse_result_t::get_parameter_count() == sizeof...(args);
+        constexpr bool parameter_count_match = pc == sizeof...(args);
         constexpr auto placeable = placement::test_placements<args_t...>();
         static_assert(
             parameter_count_match,
@@ -84,20 +67,18 @@ class log_config {
             const auto s = string_size_bound(std::forward<args_t>(args)...);
             std::string str_result;
             str_result.resize(s);  // reserve sufficient space for the output
-            auto t = std::forward_as_tuple(std::forward<args_t>(args)...);
             char *buf = str_result.data();
 
-            parse_result_t::visit(
-                [this, &buf](auto fe) {
+            parse_result.visit(
+                [&buf](char const * str, size_t len) {
                     using placement::unsafe_place;
-                    buf = unsafe_place(
-                        buf, parse_result.str().data() + fe.start, fe.size());
+                    buf = unsafe_place(buf, str, len);
                 },
-                [this, &t, &buf](auto pe) {
+                [&buf](auto &&arg) {
                     using placement::unsafe_place;
-                    auto const &arg = std::get<pe.index>(t);
                     buf = unsafe_place(buf, arg);
-                });
+                },
+                std::forward<args_t>(args)...);
             *buf = 0;
             str_result.resize(buf - str_result.data());
             return str_result;
@@ -113,8 +94,7 @@ class log_config {
      */
     template <typename... args_t>
     char *format_to(char *buf, args_t &&... args) const {
-        constexpr bool parameter_count_match =
-            parse_result_t::get_parameter_count() == sizeof...(args);
+        constexpr bool parameter_count_match = pc == sizeof...(args);
         static_assert(
             parameter_count_match,
             "Number of format parameters doesn't match to format string");
@@ -129,20 +109,16 @@ class log_config {
                 // we will already have static asserted when getting here.
                 return {};
             } else {
-                auto t = std::forward_as_tuple(std::forward<args_t>(args)...);
-
-                parse_result_t::visit(
-                    [this, &buf](auto fe) {
+                parse_result.visit(
+                    [&buf](char const * str, size_t len) {
                         using placement::unsafe_place;
-                        buf = unsafe_place(buf,
-                                           parse_result.str().data() + fe.start,
-                                           fe.size());
+                        buf = unsafe_place(buf, str, len);
                     },
-                    [&buf, &t](auto pe) {
+                    [&buf](auto &&arg) {
                         using placement::unsafe_place;
-                        auto const &arg = std::get<pe.index>(t);
                         buf = unsafe_place(buf, arg);
-                    });
+                    },
+                    std::forward<args_t>(args)...);
                 *buf = 0;
                 return buf;
             }
@@ -151,9 +127,7 @@ class log_config {
 
     // return true if a format string is valid.
     // true for all log config objects returned by _fmt.
-    constexpr bool ok() const noexcept {
-        return parse_result.is_valid_format_string();
-    }
+    constexpr bool ok() const noexcept { return valid; }
 };  // namespace pformat
 
 #ifdef __clang__
@@ -168,23 +142,13 @@ namespace internal {
  * ok().
  */
 template <typename char_t, char_t... charpack>
-constexpr auto operator""_unchecked_fmt() noexcept {
+constexpr auto operator""_unchecked_log() noexcept {
     static_assert(std::is_same<char_t, char>::value, "Only char is supported");
-    auto parse_result = internal::parse_format<charpack...>();
-    return log_config(parse_result);
+    constexpr auto parse_result = internal::parse_format<charpack...>();
+    return log_config<decltype(parse_result),
+                      parse_result.is_valid_format_string(),
+                      parse_result.get_parameter_count()>(parse_result);
 }
-
-static_assert(""_unchecked_fmt.ok());
-static_assert("foo"_unchecked_fmt.ok());
-static_assert("foo {}"_unchecked_fmt.ok());
-static_assert(!"foo {a}"_unchecked_fmt.ok());
-static_assert("foo {} bar {}"_unchecked_fmt.ok());
-static_assert("foo {{"_unchecked_fmt.ok());
-static_assert("foo }}"_unchecked_fmt.ok());
-static_assert("foo {{}}"_unchecked_fmt.ok());
-static_assert("foo }}"_unchecked_fmt.ok());
-static_assert(!"foo {"_unchecked_fmt.ok());
-static_assert(!"foo {{}"_unchecked_fmt.ok());
 
 }  // namespace internal
 
@@ -194,12 +158,14 @@ static_assert(!"foo {{}"_unchecked_fmt.ok());
  * It is statically asserted that the log config object is valid
  */
 template <typename char_t, char_t... charpack>
-constexpr auto operator""_fmt() noexcept {
+constexpr auto operator""_log() noexcept {
     static_assert(std::is_same<char_t, char>::value, "Only char is supported");
-    auto parse_result = internal::parse_format<charpack...>();
+    constexpr auto parse_result = internal::parse_format<charpack...>();
     static_assert(parse_result.is_valid_format_string(),
                   "Format string is not valid");
-    return log_config(parse_result);
+    return log_config<decltype(parse_result),
+                      parse_result.is_valid_format_string(),
+                      parse_result.get_parameter_count()>(parse_result);
 }
 
 #ifdef __clang__

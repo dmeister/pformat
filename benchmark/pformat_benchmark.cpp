@@ -8,7 +8,7 @@ static void BM_PFormat(benchmark::State &state) {
     auto n = state.range(0);
     // Perform setup here
     for (auto _ : state) {
-        constexpr auto compiled_format = "foo {} bar {} do {}"_fmt;
+        constexpr auto compiled_format = "foo {} bar {} do {}"_log;
         for (long i = 0; i < n; ++i) {
             char buf[100];
             benchmark::DoNotOptimize(buf);

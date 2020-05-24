@@ -1,12 +1,6 @@
-#include <algorithm>
-#include <array>
-#include <cassert>
-#include <cstring>
-#include <iostream>
-#include <numeric>
-#include <tuple>
+#include <string>
 #include <type_traits>
-#include <vector>
+#include <algorithm>
 
 namespace pformat {
 
@@ -17,7 +11,7 @@ namespace placement {
 struct format_extention {
     // return an upper bound on the number of characters unsafe_place
     // might produce
-    virtual size_t placement_size() const = 0;
+    virtual std::size_t placement_size() const = 0;
 
     // place the characters into the buffer and
     // return a pointer to the next element of the buffer.
@@ -132,7 +126,7 @@ inline char *unsafe_place(char *buf, char const *s) noexcept {
 }
 
 inline char *unsafe_place(char *buf, char const *str_begin,
-                          size_t len) noexcept {
+                          std::size_t len) noexcept {
     std::memcpy(buf, str_begin, len);
     return buf + len;
 }
@@ -150,7 +144,7 @@ inline char *unsafe_place(char *buf, format_extention_t const &d) {
 // we assume the longest integral is 64-bit and use that number
 template <typename int_t, typename std::enable_if<
                               std::is_integral<int_t>::value>::type * = nullptr>
-constexpr size_t placement_size(int_t) noexcept {
+constexpr std::size_t placement_size(int_t) noexcept {
     static_assert(sizeof(int_t) < 64, "Only integers to 64-bit are supported");
     // len(18446744073709551615) == 20
     return 20;
@@ -160,19 +154,19 @@ constexpr size_t placement_size(int_t) noexcept {
 template <typename float_t,
           typename std::enable_if<std::is_floating_point<float_t>::value>::type
               * = nullptr>
-constexpr size_t placement_size(float_t) noexcept {
+constexpr std::size_t placement_size(float_t) noexcept {
     return 20;
 }
 
 // size of a char if placed
-constexpr size_t placement_size(char) noexcept { return 1; }
+constexpr std::size_t placement_size(char) noexcept { return 1; }
 
 // size of an enu if placed
 //
 // We use the underlying type
 template <typename enum_t, typename std::enable_if<
                                std::is_enum<enum_t>::value>::type * = nullptr>
-constexpr size_t placement_size(enum_t v) noexcept {
+constexpr std::size_t placement_size(enum_t v) noexcept {
     using int_t = typename std::underlying_type<enum_t>::type;
     return placement_size(static_cast<int_t>(v));
 }
@@ -181,22 +175,20 @@ constexpr size_t placement_size(enum_t v) noexcept {
 template <typename format_extention_t,
           typename std::enable_if<std::is_base_of<
               format_extention, format_extention_t>::value>::type * = nullptr>
-constexpr size_t placement_size(format_extention_t const &d) noexcept {
+constexpr std::size_t placement_size(format_extention_t const &d) noexcept {
     return d.placement_size();
 }
 
 // size of a std::string if placed
-inline size_t placement_size(std::string const &s) noexcept {
-    return s.size();
-}
+inline std::size_t placement_size(std::string const &s) noexcept { return s.size(); }
 
 // size of a string_view if placed
-inline constexpr size_t placement_size(std::string_view const &s) noexcept {
+inline constexpr std::size_t placement_size(std::string_view const &s) noexcept {
     return s.size();
 }
 
 // size of a const char * if placed
-inline size_t placement_size(const char *s) noexcept { return std::strlen(s); }
+inline std::size_t placement_size(const char *s) noexcept { return std::strlen(s); }
 
 namespace internal {
 // helper to check if a type can be placed.
@@ -224,33 +216,11 @@ constexpr bool is_placeable() noexcept {
            unsafe_place_test<void, type_t>::value;
 }
 
-static_assert(is_placeable<int>());
-static_assert(is_placeable<char const *>());
-static_assert(is_placeable<bool>());
-static_assert(!is_placeable<std::vector<int>>());
-
-template <typename type_t, typename... type_rest_t>
-constexpr bool test_placements_helper() {
-    constexpr auto placeable = is_placeable<type_t>();
-    static_assert(placeable, "Type type_t not placeable");
-    if constexpr (!placeable) {
-        return false;
-    } else if constexpr (sizeof...(type_rest_t) == 0) {
-        return true;
-    } else {
-        return test_placements_helper<type_rest_t...>();
-    }
-}
-
 }  // namespace internal
 
 template <typename... type_t>
 constexpr bool test_placements() {
-    if constexpr (sizeof...(type_t) == 0) {
-        return true;
-    } else {
-        return internal::test_placements_helper<type_t...>();
-    }
+    return (internal::is_placeable<type_t>() && ...);
 }
 
 };  // namespace placement
@@ -261,15 +231,15 @@ struct pointer_format_extention final : placement::format_extention {
 
     constexpr pointer_format_extention(pointer_t p_) : p(p_) {}
 
-    inline size_t placement_size() const override {
-        return placement::placement_size<size_t>({}) + 2;
+    inline std::size_t placement_size() const override {
+        return placement::placement_size<std::size_t>({}) + 2;
     }
 
     inline char *unsafe_place(char *buf) const override {
         buf[0] = '0';
         buf[1] = 'x';
-        const size_t v = reinterpret_cast<size_t>(p);
-        return placement::unsafe_place<size_t, 16>(buf + 2, v);
+        const std::size_t v = reinterpret_cast<std::size_t>(p);
+        return placement::unsafe_place<std::size_t, 16>(buf + 2, v);
     }
 };
 

@@ -12,8 +12,8 @@ static void BM_PFormat(benchmark::State &state) {
         for (long i = 0; i < n; ++i) {
             char buf[100];
             benchmark::DoNotOptimize(buf);
-            auto end = compiled_format.format_to(buf, i, 2, s);
-            *end = 0;
+            auto end = compiled_format.format_to(buf, buf+100,i, 2, s);
+            *end.value() = 0;
             benchmark::ClobberMemory();
         }
     }

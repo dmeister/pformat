@@ -1,3 +1,5 @@
+#include <cassert>
+
 #include "fixed_string.h"
 #include "parser.h"
 #include "placement.h"
@@ -32,8 +34,7 @@ class log_config {
             return 0;
         } else {
             std::size_t size{};
-            parse_result.visit([&size](char const *, size_t len) { size += len; },
-                               [&size](auto &&args) {
+            parse_result.visit([&size](auto &&args) {
                                    using placement::placement_size;
                                    size += placement_size(args);
                                },
@@ -68,15 +69,14 @@ class log_config {
             std::string str_result;
             str_result.resize(s);  // reserve sufficient space for the output
             char *buf = str_result.data();
+            char * buf_end = str_result.data() + s;
 
             parse_result.visit(
-                [&buf](char const * str, size_t len) {
+                [&buf, buf_end](auto &&arg) {
                     using placement::unsafe_place;
-                    buf = unsafe_place(buf, str, len);
-                },
-                [&buf](auto &&arg) {
-                    using placement::unsafe_place;
-                    buf = unsafe_place(buf, arg);
+                    auto [bufr, ec] = unsafe_place(buf, buf_end, arg);
+                    assert(ec == std::errc());
+                    buf = bufr;
                 },
                 std::forward<args_t>(args)...);
             *buf = 0;
@@ -93,7 +93,7 @@ class log_config {
      * string_size_bound(...) many bytes.
      */
     template <typename... args_t>
-    char *format_to(char *buf, args_t &&... args) const {
+    std::optional<char*> format_to(char *buf, char * buf_end, args_t &&... args) const {
         constexpr bool parameter_count_match = pc == sizeof...(args);
         static_assert(
             parameter_count_match,
@@ -104,23 +104,25 @@ class log_config {
             // the processing
             return {};
         } else {
+            bool ok = true;
             constexpr auto placeable = placement::test_placements<args_t...>();
             if constexpr (!placeable) {
                 // we will already have static asserted when getting here.
                 return {};
             } else {
                 parse_result.visit(
-                    [&buf](char const * str, size_t len) {
+                    [&buf, buf_end, &ok](auto &&arg) {
                         using placement::unsafe_place;
-                        buf = unsafe_place(buf, str, len);
-                    },
-                    [&buf](auto &&arg) {
-                        using placement::unsafe_place;
-                        buf = unsafe_place(buf, arg);
+                        auto [bufr, ec] = unsafe_place(buf, buf_end, arg);
+                        ok &= ec == std::errc();
+                        buf = bufr;
                     },
                     std::forward<args_t>(args)...);
                 *buf = 0;
-                return buf;
+                if (!ok) {
+                    return std::nullopt;
+                }
+                return {buf};
             }
         }
     }

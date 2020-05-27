@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <utility>
+#include <algorithm>
 
 #include "fixed_string.h"
 
@@ -28,23 +29,23 @@ enum class grammer_state { out, in, escape, invalid };
 template <int n, size_t str_size>
 struct format_result {
     std::size_t current_str{};
-    char str[str_size+1]{};
+    std::array<char, str_size+1> str{};
 
     std::size_t current_result{0};
-    format_element results[n]{};
+    std::array<format_element, n> results{};
     bool valid{true};
 
     constexpr void clear() { valid=false; }
 
-    constexpr void push_element(char const * const input_str, std::size_t start, std::size_t end) {
+    constexpr void push_element(
+        std::string_view input_str) {
         auto & e = results[current_result];
         if (!e.set) {
             e.start = current_str;
             e.set = true;
         }
-        size_t i{};
-        for (; i < end - start; i++) {
-            str[current_str++] = input_str[start + i];
+        for (auto c : input_str) {
+            str[current_str++] = c;
         }
         e.end = current_str;
         str[current_str] = 0;
@@ -64,37 +65,42 @@ struct format_result {
 
     // the visit function using the visitor pattern
     // is the main way inspect the format result.
-    template <typename element_func_t, typename parameter_func_t,
+    template <typename func_t,
               typename... args_t>
-    inline constexpr void visit(element_func_t &&ev, parameter_func_t &&pv,
+    inline constexpr void visit(func_t && func,
                                 args_t &&... args) const {
-        std::size_t i = 0;
-        auto visit_helper = [this, &i, &ev, &pv](auto &&arg) {
-            if (!results[i].empty()) {
-                ev(str + results[i].start, results[i].size());
+        if constexpr (sizeof...(args) == 0) {
+            func(std::string_view{str.data() + results.front().start, results.front().size()});
+        } else {
+            auto result = results.begin();
+            auto visit_helper = [this, &result, &func](auto &&arg) {
+                if (!result->empty()) {
+                    func(std::string_view{str.data() + result->start, result->size()});
+                }
+                result++;
+                func(std::forward<decltype(arg)>(arg));
+            };
+            (visit_helper(args), ...);
+            if (!result->empty()) {
+                func(std::string_view{str.data() + result->start, result->size()});
             }
-            i++;
-            pv(std::forward<decltype(arg)>(arg));
-        };
-        (visit_helper(args), ...);
-        if (!results[i].empty()) {
-            ev(str + results[i].start, results[i].size());
         }
     }
 
-    constexpr void parse(char const * const str) {
-        std::size_t start = 0;
+    constexpr void parse(std::string_view str) {
         grammer_state state = grammer_state::out;
 
-        std::size_t i = 0;
-        for (; str[i] && state != grammer_state::invalid; i++) {
-            auto c = str[i];
+        auto i = std::begin(str);
+        auto const end = std::end(str);
+        auto start = i;
+        for (; i != end && state != grammer_state::invalid; i++) {
+            auto c = *i;
             if (state == grammer_state::out) {
                 if (c == '{') {
-                    push_element(str, start, i);
+                    push_element(std::string_view(start, std::distance(start, i)));
                     state = grammer_state::in;
                 } else if (c == '}') {
-                    push_element(str, start, i);
+                    push_element(std::string_view(start, std::distance(start, i)));
                     state = grammer_state::escape;
                 }
             } else if (state == grammer_state::in) {
@@ -120,16 +126,17 @@ struct format_result {
         if (state != grammer_state::out) {
             clear();
         } else {
-            push_element(str, start, i);
+            push_element(std::string_view(start, std::distance(start, i)));
         }
     }
 };
 
-static constexpr std::size_t count_formats(const char *str) {
+template <char ... charpack>
+static constexpr std::size_t count_formats() {
+    std::initializer_list<char> str{charpack...};
     int count_open{1};
     int count_closing{1};
-    for (size_t i = 0; str[i]; i++) {
-        auto c = str[i];
+    for (auto c : str) {
         if (c == '{') {
             count_open++;
         } else if (c == '}') {
@@ -147,20 +154,20 @@ static constexpr std::size_t count_formats(const char *str) {
 // returns a matching configured log_config
 // check is_valid_format_string() to see if
 // the parsing was successful or not.
-template <char ... charpack>
+template <char ... charpack,
+    size_t format_count = count_formats<charpack...>(),
+    size_t str_size = sizeof...(charpack),
+    size_t adjusted_str_size = std::max<size_t>(2, (str_size >> 1) << 2),
+    typename format_result_t = format_result<format_count, adjusted_str_size>>
 constexpr auto parse_format() {
-    constexpr fixed_string<sizeof...(charpack) + 1> str({charpack...});
-    constexpr size_t str_size = sizeof...(charpack);
-    constexpr auto format_count = count_formats(str.c_str());
 
     if constexpr (format_count == 0) {
         return format_result<0, 0>();
     } else {
+        constexpr fixed_string<sizeof...(charpack) + 1> str({charpack...});
         // so that there is re-used.
-        constexpr size_t adjusted_str_size = std::max<size_t>(2, (str_size >> 1) << 2);
-        using format_result_t = format_result<format_count, adjusted_str_size>;
         format_result_t result;
-        result.parse(str.c_str());
+        result.parse({str.c_str(), str.size()});
         return result;
     }
 }

@@ -1,6 +1,8 @@
 #include <string>
+#include <cstring>
 #include <type_traits>
 #include <algorithm>
+#include <charconv>
 
 namespace pformat {
 
@@ -18,154 +20,111 @@ struct format_extention {
     //
     // the caller has to ensure that placement_size() many
     // chars are available to use.
-    virtual char *unsafe_place(char *buf) const = 0;
+    //
+    // unsafe_place is only allowed to return std::errc::value_too_large and std::errc();
+    virtual std::to_chars_result unsafe_place(char *buf, char * buf_end) const = 0;
 };
 
 // basic reverse based itoa.
 // can be optimized later
 template <typename int_t,
-          typename std::enable_if<std::is_integral<int_t>::value &&
-                                      std::is_signed<int_t>::value,
-                                  int>::type * = nullptr>
-char *unsafe_place(char *buf, int_t value) noexcept {
-    using unsigned_int_t = typename std::make_unsigned<int_t>::type;
-    bool neg = value < int_t();
-    unsigned_int_t i = unsigned_int_t() +
-                       (-(neg * 2 - 1) * static_cast<unsigned_int_t>(value));
-    char *p = buf;
+          typename = std::enable_if_t<std::is_integral_v<int_t>>>
+std::to_chars_result unsafe_place(char *buf, char * buf_end, int_t value) noexcept {
 
-    do {
-        unsigned_int_t lsd = i % 10U;
-        i /= 10;
-        *p++ = 0x30 + lsd;  // 0x30 is 0 in ASCSII
-    } while (i != 0);
+    return std::to_chars(buf, buf_end, value);
+}
 
-    if (neg) {
-        *p++ = '-';
+inline std::to_chars_result unsafe_place(char *buf, char * buf_end, char value) noexcept {
+    if (buf == buf_end) {
+        return {buf, std::errc::value_too_large};
+
     }
-    *p = '\0';
-    std::reverse(buf, p);
-    return p;
-}
-
-template <unsigned base_v>
-inline char integer_place_char(char i) noexcept {
-    static_assert(base_v == 10 || base_v == 16,
-                  "Only 10 and 16 are supported as bases");
-    constexpr char base = '0';
-    if constexpr (base_v == 10) {
-        return base + i;
-    }
-    constexpr char diff = 'a' - (base + 10);
-    bool higher =
-        i == 10 || i == 11 || i == 12 || i == 13 || i == 14 || i == 15;
-    auto offset = higher * diff;
-    return base + offset + i;
-}
-
-template <
-    typename int_t, unsigned base_v = 10,
-    typename std::enable_if<std::is_integral<int_t>::value &&
-                            !std::is_signed<int_t>::value>::type * = nullptr>
-char *unsafe_place(char *buf, int_t value) noexcept {
-    static_assert(base_v == 10 || base_v == 16,
-                  "Only 10 and 16 are supported as bases");
-    int_t i = value;
-    char *p = buf;
-
-    do {
-        char lsd = i % base_v;
-        i /= base_v;
-        *p++ = integer_place_char<base_v>(lsd);
-    } while (i != 0);
-    *p = '\0';
-    std::reverse(buf, p);
-    return p;
-}
-
-inline char *unsafe_place(char *buf, char value) noexcept {
     *buf = value;
-    return buf + 1;
+    return {buf + 1, std::errc()};
 }
 
-template <typename enum_t, typename std::enable_if<
-                               std::is_enum<enum_t>::value>::type * = nullptr>
-char *unsafe_place(char *buf, enum_t value) noexcept {
+template <typename enum_t, std::enable_if_t<
+                               std::is_enum_v<enum_t>, int> = 0>
+std::to_chars_result unsafe_place(char *buf, char * buf_end, enum_t value) noexcept {
     using int_t = typename std::underlying_type<enum_t>::type;
-    return unsafe_place(buf, static_cast<int_t>(value));
+    return unsafe_place(buf, buf_end, static_cast<int_t>(value));
 }
 
-inline char *unsafe_place(char *buf, double value) noexcept {
-    // yeah, I don't really want to write this.
+inline std::to_chars_result unsafe_place(char *buf, char *, double value) noexcept {
+    // strangely to_chars appears to not be implemented
     auto i = std::snprintf(buf, 20, "%f", value);
-    return buf + i;
+    return {buf + i, std::errc()};
 }
 
-inline char *unsafe_place(char *buf, bool value) noexcept {
+inline std::to_chars_result unsafe_place(char *buf, char * buf_end, bool value) noexcept {
     int l = 4 + !value;
+    if (buf + l >= buf_end) {
+            return {buf, std::errc::value_too_large};
+    }
     std::memcpy(buf, value ? "true" : "false", l);
-    return buf + l;
+    return {buf + l, std::errc()};
 }
 
-inline char *unsafe_place(char *buf, std::string const &value) noexcept {
+inline std::to_chars_result unsafe_place(char *buf, char *, std::string const &value) noexcept {
     int l = value.size();
     std::memcpy(buf, value.data(), l);
-    return buf + l;
+    return {buf + l, std::errc()};
 }
 
-inline char *unsafe_place(char *buf, std::string_view const &value) noexcept {
+inline std::to_chars_result unsafe_place(char *buf, char *,std::string_view const &value) noexcept {
     int l = value.size();
     std::memcpy(buf, value.data(), l);
-    return buf + l;
+    return {buf + l, std::errc()};
 }
 
-inline char *unsafe_place(char *buf, char const *s) noexcept {
+inline std::to_chars_result unsafe_place(char *buf, char*,char const *s) noexcept {
     auto l = strlen(s);
     std::memcpy(buf, s, l);
-    return buf + l;
+    return {buf + l, std::errc()};
 }
 
-inline char *unsafe_place(char *buf, char const *str_begin,
+inline std::to_chars_result unsafe_place(char *buf, char *,char const *str_begin,
                           std::size_t len) noexcept {
     std::memcpy(buf, str_begin, len);
-    return buf + len;
+    return {buf + len, std::errc()};
 }
 
 template <typename format_extention_t,
-          typename std::enable_if<std::is_base_of<
-              format_extention, format_extention_t>::value>::type * = nullptr>
-inline char *unsafe_place(char *buf, format_extention_t const &d) {
-    return d.unsafe_place(buf);
+          std::enable_if_t<std::is_base_of_v<
+              format_extention, format_extention_t>, int> = 0>
+inline std::to_chars_result unsafe_place(char *buf, char * buf_end, format_extention_t const &d) {
+    return d.unsafe_place(buf, buf_end);
 }
 
 // placement_size returns the maximal size a value can take in a formatted
 // string.
 //
 // we assume the longest integral is 64-bit and use that number
-template <typename int_t, typename std::enable_if<
-                              std::is_integral<int_t>::value>::type * = nullptr>
+template <typename int_t, std::enable_if_t<
+                              std::is_integral_v<int_t>, int> = 0>
 constexpr std::size_t placement_size(int_t) noexcept {
-    static_assert(sizeof(int_t) < 64, "Only integers to 64-bit are supported");
-    // len(18446744073709551615) == 20
-    return 20;
+    return std::numeric_limits<int_t>::digits10;
 }
 
 // size of a floating point number if placed
 template <typename float_t,
-          typename std::enable_if<std::is_floating_point<float_t>::value>::type
-              * = nullptr>
+          std::enable_if_t<std::is_floating_point_v<float_t>, int> = 0>
 constexpr std::size_t placement_size(float_t) noexcept {
-    return 20;
+    return std::numeric_limits<float_t>::digits10;
 }
 
 // size of a char if placed
 constexpr std::size_t placement_size(char) noexcept { return 1; }
 
-// size of an enu if placed
+
+// size of a bool if placed
+constexpr std::size_t placement_size(bool) noexcept { return 5; }
+
+// size of an enum if placed
 //
 // We use the underlying type
-template <typename enum_t, typename std::enable_if<
-                               std::is_enum<enum_t>::value>::type * = nullptr>
+template <typename enum_t, std::enable_if_t<
+                               std::is_enum_v<enum_t>, int> = 0>
 constexpr std::size_t placement_size(enum_t v) noexcept {
     using int_t = typename std::underlying_type<enum_t>::type;
     return placement_size(static_cast<int_t>(v));
@@ -173,8 +132,8 @@ constexpr std::size_t placement_size(enum_t v) noexcept {
 
 // size of a a format extension when placed
 template <typename format_extention_t,
-          typename std::enable_if<std::is_base_of<
-              format_extention, format_extention_t>::value>::type * = nullptr>
+          std::enable_if_t<std::is_base_of_v<
+              format_extention, format_extention_t>, int> = 0>
 constexpr std::size_t placement_size(format_extention_t const &d) noexcept {
     return d.placement_size();
 }
@@ -207,7 +166,7 @@ struct unsafe_place_test : std::false_type {};
 
 template <typename... Args>
 struct unsafe_place_test<std::void_t<decltype(unsafe_place(
-                             std::declval<char *>(), std::declval<Args>()...))>,
+                             std::declval<char *>(), std::declval<char *>(), std::declval<Args>()...))>,
                          Args...> : std::true_type {};
 
 template <typename type_t>
@@ -232,21 +191,25 @@ struct pointer_format_extention final : placement::format_extention {
     constexpr pointer_format_extention(pointer_t p_) : p(p_) {}
 
     inline std::size_t placement_size() const override {
-        return placement::placement_size<std::size_t>({}) + 2;
+        return std::numeric_limits<std::size_t>::digits10 + 2;
     }
 
-    inline char *unsafe_place(char *buf) const override {
+    inline std::to_chars_result unsafe_place(char *buf, char * buf_end) const override {
+        if (buf_end - buf < static_cast<int64_t>(placement_size())) {
+            return {buf, std::errc::value_too_large};
+        }
         buf[0] = '0';
         buf[1] = 'x';
         const std::size_t v = reinterpret_cast<std::size_t>(p);
-        return placement::unsafe_place<std::size_t, 16>(buf + 2, v);
+        return std::to_chars(buf + 2, buf_end, v, 16);
     }
 };
 
-template <typename value_t>
+template <typename value_t,
+    typename pointer_t = typename std::add_pointer<value_t>::type,
+    typename extension_t = pointer_format_extention<pointer_t>>
 auto any(value_t *p) {
-    using pointer_t = typename std::add_pointer<value_t>::type;
-    return pointer_format_extention<pointer_t>(p);
+    return extension_t(p);
 }
 
 }  // namespace pformat

@@ -46,7 +46,7 @@ TEST(Pformat, FormatTo) {
 
     char buf[100];
     constexpr auto f = "foo {} bar {} do {}"_log;
-    f.format_to(buf, "a", "", "c");
+    f.format_to(buf, buf + 10, "a", "", "c");
     ASSERT_EQ(strcmp(buf, "foo a bar  do c"), 0);
 }
 
@@ -136,12 +136,12 @@ class adl_class {};
 
 size_t placement_size(adl_class const &) { return 4; }
 
-char *unsafe_place(char *buf, adl_class const &) {
+std::to_chars_result unsafe_place(char *buf, char *, adl_class const &) {
     buf[0] = 'a';
     buf[1] = 's';
     buf[2] = 'd';
     buf[3] = 'f';
-    return buf + 4;
+    return {buf + 4, std::errc()};
 }
 }  // namespace
 TEST(Pformat, FormatWithADL) {
